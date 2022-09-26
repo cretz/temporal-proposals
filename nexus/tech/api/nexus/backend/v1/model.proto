@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package nexus.backend.v1;
+
+// Service that can receive Nexus calls.
+// 
+// NOTES:
+// * This may split to "service info" (for discovery by calling users) and
+//   "service definition" (for mutating by service implementers).
+// * In the future this could carry a typed definition helpful for code
+//   generators (though a Nexus frontend would probably surface such a
+//   definition at a well-known URL).
+message Service {
+  string name = 1;
+  string description = 2;
+}
+
+// Info for an ALO.
+message AloInfo {
+  // The identifier of the ALO. This is also the request ID of the original
+  // request.
+  //
+  // NOTES:
+  // * There is currently no use case to support separating the user-supplied
+  //   request identifier and the ALO identifier.
+  string id = 1;
+
+  // Status of the ALO.
+  Status status = 2;
+
+  // Metadata on the ALO.
+  // 
+  // NOTES:
+  // * What is this metadata? Is it request metadata? If not, how does a calling
+  //   user add metadata to their ALO? Is it server-set metadata? If not, how
+  //   does an ALO implementer provider user-readable metadata for info callers?
+  // * Note this doesn't match request/response metadata types which are built
+  //   for the RPC layer and leverage HTTP's repeated value set for single keys.
+  //   Should we make these common?
+  map<string, string> metadata = 3;
+
+  // NOTES:
+  // * While technically an ALO can be in flight in different statuses, only
+  //   "running" and "completed" represent states that would ever be returned.
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    RUNNING = 1;
+    COMPLETED = 2;
+  }
+}
+
+// Reference to an existing ALO.
+message AloRef {
+  string id = 1;
+}

@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package temporal.api.command.v1;
+
+import "nexus/backend/v1/service.proto";
+
+message ScheduleNexusCallCommandAttributes {
+  // Nexus request to make.
+  // 
+  // NOTES:
+  // * "service" in the request is actually a simple string endpoint that is
+  //   server-side mapped to the actual third-party Nexus endpoint.
+  nexus.backend.v1.CallRequest request = 1;
+
+  // NOTES:
+  // * Is there value in a retry policy at this level? Or should a Nexus call
+  //   always have a single attempt and retries are either built in to the
+  //   handler or not performed? How are details like error types represented?
+  //   (see outstanding notes on error representation).
+  // * If there is no retry, is there value in a schedule to start timeout? Is
+  //   there a concept of the server continually trying the third-party Nexus
+  //   invocation if it's down? Or are we guaranteeing that the next task
+  // * Is there value in a start/schedule to close timeout? I would think so.
+}
+
+message RequestCancelNexusCommandAttributes {
+  // Event of the scheduled command to cancel.
+  //
+  // NOTES:
+  // * This cancels either the pending call _or_ the ALO if the call started
+  //   one. Server is expected to handle each case gracefully.
+  string scheduled_event_id = 1;
+}
+
+message Command {
+  oneof attributes {
+    // Make a Nexus call.
+    // 
+    // NOTES:
+    // * Using "call" instead of "request" here, but can change if needed
+    ScheduleNexusCallCommandAttributes schedule_nexus_call_command_attributes = 18;
+
+    // Cancel a Nexus call or ALO. This can still be invoked if the call has
+    // been "completed" because an ALO may still be running.
+    //
+    // NOTES:
+    // * Even though cancellations are just nexus calls to
+    //   <alo-operation>/cancel, we chose to model this separately so the server
+    //   can manage this the way they want. Is server expected to ignore this
+    //   for already-complete Nexus non-ALOs/ALOs (even though SDK should never
+    //   send in those cases)?
+    // * This can cancel a pending call or an in-progrss ALO. Would we rather a
+    //   separate command for that?
+    RequestCancelNexusCommandAttributes request_cancel_nexus_command_attributes = 19;
+  }
+}

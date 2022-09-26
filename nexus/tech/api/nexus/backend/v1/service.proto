@@ -1,0 +1,283 @@
+syntax = "proto3";
+
+package nexus.backend.v1;
+
+import "nexus/backend/v1/model.proto";
+
+import "google/api/annotations.proto";
+import "google/protobuf/any.proto";
+
+// This service is implemented by Nexus backends to support service registration
+// and task handling.
+//
+// NOTES:
+// * This service is all that a Nexus server has to implement to support
+//   non-Temporal-specific Nexus SDK code.
+// * Technically each of the ~4 things this service does are for a different
+//   audience that will be detailed in the NOTES of each. This can be broken up
+//   if it'd make sense for a Nexus backend to, say, only support
+//   "GetServices" + "Call".
+// * Do we need CRUD for mapping outbound endpoint names to their remote service
+//   endpoints or can that remain config for now?
+service BackendService {
+  // Update the set of known services on the backend. This can be used to
+  // replace or just add/remove services. The entire call will succeed or fail.
+  //
+  // NOTES:
+  // * User would be a Nexus admin, often via CLI or UI.
+  rpc UpdateServices (UpdateServicesRequest) returns (UpdateServicesResponse) {
+    option (google.api.http) = {
+      post: "/v1/backend/services"
+      body: "*"
+    };
+  }
+
+  // Get all registered services on this backend.
+  //
+  // NOTES:
+  // * User would be any Nexus caller to this backend.
+  // * There are currently no use cases that justify any kind of filtering here.
+  // * Future 
+  rpc GetServices (GetServicesRequest) returns (GetServicesResponse) {
+    option (google.api.http) = {
+      get: "/v1/backend/services"
+    };
+  }
+
+  // Make a Nexus call to this backend.
+  //
+  // NOTES:
+  // * User would be any Nexus caller to this backend.
+  rpc Call (CallRequest) returns (CallResponse) {
+    option (google.api.http) = {
+      post: "/v1/backend/call"
+      body: "*"
+    };
+  }
+
+  // Ask for the next Nexus request to process by a worker. This is a long-poll
+  // that may be terminated by the backend after a period of time with no
+  // request. Workers are often expected to continually ask for requests and are
+  // expected to complete requests relatively quickly.
+  //
+  // NOTES:
+  // * User would be a Nexus worker programmatically.
+  // * Consideration was given to using a gRPC stream here, but they are hard to
+  //   proxy well and in gRPC/HTTP2 there is essentially no overhead to repeated
+  //   calls of this nature over a poll. The only benefit of the stream is the
+  //   keep-alive ability. Should we consider streams?
+  // * Note, there is no cancellation path. Nexus request/response are expected
+  //   to be quick. This is not to be confused with an ALO. A Nexus request
+  //   would just _start_ an ALO, never hang while it runs.
+  rpc PollNexusRequestQueue (PollNexusRequestQueueRequest) returns  (PollNexusRequestQueueResponse) {
+    option (google.api.http) = {
+      post: "/v1/backend/requests/poll"
+      body: "*"
+    };
+  }
+
+  // Tell the backend the worker has completed the Nexus request.
+  //
+  // NOTES:
+  // * User would be a Nexus worker programmatically.
+  // * Unlike workflow/activity task APIs today, this includes failures
+  rpc RespondNexusRequestCompleted (RespondNexusRequestCompletedRequest) returns (RespondNexusRequestCompletedResponse) {
+    option (google.api.http) = {
+      post: "/v1/backend/requests/respond"
+      body: "*"
+    };
+  }
+}
+
+message UpdateServicesRequest {
+  // Set of services to create or update.
+  repeated Service services = 1;
+
+  // If set, the set of services to remove. Cannot have values if replace is
+  // true. The update will fail if this includes a service that does not exist.
+  repeated string remove_services = 2;
+
+  // If true, will replace all existing services with given services. Cannot be
+  // true if remove_services has values.
+  //
+  // NOTES:
+  // * Yes this is technically a scary operation to be able to replace your
+  //   services and therefore accidentally delete one. But this is an API, one
+  //   would expect a UI/CLI to guard the user more. This simple
+  //   single-rpc-mutation API is preferred over multiple mutation methods.
+  // * Do we want a conflict_token that is returned in GetServicesResponse for
+  //   atomic mutations?
+  bool replace = 3;
+}
+
+message UpdateServicesResponse {
+  // Set of created/updated services. Does not include deletes ones.
+  repeated Service services = 1;
+}
+
+message GetServicesRequest {
+}
+
+message GetServicesResponse {
+  repeated Service services = 1;
+}
+
+// Values that can be added to each metadata key in the call or response.
+// 
+// NOTES:
+// * This is analogous to HTTP headers (and will map to them when we do the HTTP
+//   protocol) which is why it's a set of repeated values.
+message MetadataValues {
+  repeated string values = 1;
+}
+
+enum OperationType {
+  OPERATION_TYPE_UNSPECIFIED = 0;
+  NORMAL = 1;
+  ALO = 2;
+}
+
+message CallRequest {
+  // Unique, client-supplied identifier for the request. This should be unique
+  // for both the caller and the receiver.
+  //
+  // NOTES:
+  // * So, say in a scenario where a user isn't using some good global
+  //   uniqueness. Can a completely separate caller use the same request
+  //   identifier to cause clash. Ideally, for security purposes each
+  //   authenticated caller org is isolated from the other, so the onus is on
+  //   the server to qualify this.
+  string request_id = 1;
+
+  // Service this call is for.
+  //
+  // NOTES:
+  // * For HTTP this is part of the URL most likely.
+  string service = 2;
+
+  // Metadata for the operation.
+  //
+  // NOTES:
+  // * For HTTP these are headers. This will include the HTTP2 headers :method,
+  //   :scheme, :authority, and :path for all HTTP calls.
+  map<string, MetadataValues> metadata = 3;
+
+  // Operation for this call. Some operations are special:
+  // 
+  // * <alo-operation> - Start ALO, input can be anything, response is always
+  //   AloInfo.
+  // * <alo-operation>/cancel - Cancel ALO, input must be AloRef, response has
+  //   no output.
+  // * <alo-operation>/get - Get ALO, input must be AloRef, response is always
+  //   AloInfo.
+  //
+  // NOTES:
+  // * For HTTP this is part of the URL most likely.
+  // * Yes, "<alo-operation>" means that any call _could_ be an ALO, but maybe
+  //   not. This poses many challenges on the user. Are we ok with this?
+  string operation = 3;
+
+  // Input for the operation.
+  //
+  // NOTES:
+  // * For HTTP, this is the body.
+  // * We are not handling large, streaming inputs at this time (e.g. streaming
+  //   a file upload).
+  bytes input = 4;
+
+  // NOTES:
+  // * How do we represent a way to push response back? We only need this for
+  //   ALOs but one of our goals was to not have the caller care whether it was
+  //   an ALO. We could give callback URL/gRPC. Many ideas, but afraid to put
+  //   one in writing right now. Are we sure the caller doesn't need to know
+  //   they are invoking an ALO at call time?
+  // * In the future we can provide more caller information (addr, TLS, etc).
+  // * In the future we can include the protocol the caller is using.
+}
+
+message CallResponse {
+  // Same unique identifier provided on the request.
+  string request_id = 1;
+
+  // Metadata for the operation.
+  //
+  // NOTES:
+  // * For HTTP these are headers. This will include the HTTP2 header :status
+  //   for all HTTP calls.
+  map<string, MetadataValues> metadata = 2;
+
+  // Type of operation. If this is ALO_INFO, then the output is an AloInfo
+  // proto. This can come from starting an ALO or getting an ALO.
+  // 
+  // NOTES:
+  // * Open to clearer ways to represent that the result of an operation is a
+  //   start ALO and not just a regular response.
+  // * For HTTP, if ALO_INFO, this would also be in a header. Maybe this should
+  //   be in metadata anyways?
+  ResponseType response_type = 3;
+
+  // Output for the operation.
+  //
+  // NOTES:
+  // * For HTTP, this is the body.
+  // * We are not handling large, streaming inputs at this time
+  //   (e.g. streaming a file upload).
+  bytes output = 4;
+
+  message ResponseType {
+    RESPONSE_TYPE_UNSPECIFIED = 0;
+    ALO_INFO = 1;
+  }
+
+  // NOTES:
+  // * How do we want to represent an error? Clearly we don't want to use gRPC
+  //   errors to represent Nexus request errors. But we don't want to marry
+  //   ourselves too close to HTTP. But we also don't want them to have to parse
+  //   custom output to even know it's an error or what general error it is.
+}
+
+message PollNexusRequestQueueRequest {
+  // Services the caller can accept requests for.
+  // 
+  // NOTES:
+  // * This is intentionally not a single service like Temporal has single task
+  //   queue which is too limiting.
+  // * The reason Service is a message and not just a name is so we can add
+  //   things like priority, server labels patterns, operation filters, etc in
+  //   the future. This is much more robust than Temporal's current approach.
+  repeated ServiceMatch services = 1;
+
+  // Metadata for the poll request.
+  //
+  // NOTES:
+  // * This can include identity, versions, arbitrary labels for server-side
+  //   matching, whatever.
+  map<string, MetadataValues> metadata = 2;
+
+  message ServiceMatch {
+    string name = 1;
+  }
+}
+
+message PollNexusRequestQueueResponse {
+  // Call request.
+  // 
+  // NOTES:
+  // * While we technically could get rid of this response message and just use
+  //   CallRequest as response from the RPC, it's not good practice and does not
+  //   allow for future expansion of just this response.
+  CallRequest request = 1;
+}
+
+message RespondNexusRequestCompletedRequest {
+  // Call response.
+  // 
+  // NOTES:
+  // * While we technically could get rid of this completed message and just use
+  //   CallResponse as request from the RPC, it's not good practice and does not
+  //   allow for future expansion of just this request.
+  CallResponse response = 1;
+}
+
+message RespondNexusRequestCompletedResponse {
+}

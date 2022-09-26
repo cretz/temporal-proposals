@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package temporal.api.history.v1;
+
+import "nexus/backend/v1/service.proto";
+
+message NexusCallScheduledEventAttributes {
+  // Nexus request.
+  nexus.backend.v1.CallRequest request = 1;
+
+  // NOTES:
+  // * Add timeouts/retry if we choose to include them in the command.
+}
+
+message NexusCallCompletedEventAttributes {
+  // ID of the scheduled event.
+  int64 scheduled_event_id = 1;
+
+  oneof completion {
+    // Nexus response.
+    // 
+    // NOTES:
+    // * This can be a completed non-ALO or a started ALO. We prefer to have the
+    //   call response model this and if it's not clear how to extract one from
+    //   another we can clarify on that message or make helpers available.
+    nexus.backend.v1.CallResponse response = 2;
+
+    // Nexus call could not be invoked. This is not the same as a Nexus call
+    // returning a failure, which would still be in the response.
+    // 
+    // NOTES:
+    // * Like the Nexus backend service, chose to combine failure and success in
+    //   the same event. Can change to separate if wanted.
+    temporal.api.failure.v1.Failure failure = 3;
+  }
+
+  // NOTES:
+  // * Add retry/last_failure/etc if we choose to do retries.
+}
+
+message NexusAloCompletedEventAttributes {
+  // ID of the scheduled event.
+  int64 scheduled_event_id = 1;
+
+  // ID of the completed call event.
+  int64 call_completed_event_id = 2;
+
+  // Completed ALO response.
+  nexus.backend.v1.CallResponse response = 3;
+
+  // NOTES:
+  // * Add retry/last_failure/etc if we choose to do retries.
+  // * Add failure if we support caller timeouts.
+}
+
+message NexusCancelRequestedEventAttributes {
+  // ID of the scheduled event.
+  int64 scheduled_event_id = 1;
+
+  // NOTES:
+  // * ActivityTaskCancelRequestedEventAttributes has
+  //   workflow_task_completed_event_id, do we need that?
+}
+
+message HistoryEvent {
+  oneof attributes {
+    // Event for the scheduling of the Nexus call.
+    //
+    // NOTES:
+    // * If we don't allow retries and we expect Nexus calls to be handled
+    //   immediately or failed, we technically could get rid of this, but we
+    //   probably shouldn't.
+    NexusCallScheduledEventAttributes nexus_call_scheduled_event_attributes = 52;
+
+    // Event for the completion of a Nexus call.
+    //
+    // NOTES:
+    // * There is no "started" event because all Nexus calls are fast/sync. Yes
+    //   this technically may have "started" an ALO underneath, but from a Nexus
+    //   perspective the call was completed.
+    NexusCallCompletedEventAttributes nexus_call_completed_event_attributes = 53;
+
+    // Event for the completion of a Nexus ALO. This is guaranteed to never
+    // occur unless there was a previous nexus_call_completed_event_attributes
+    // with a successful ALO info.
+    NexusAloCompletedEventAttributes nexus_alo_completed_event_attributes = 54;
+
+    // Event representing cancellation request of a Nexus call and/or ALO.
+    //
+    // NOTES:
+    // * We intentionally don't have a NexusCallCancelledEventAttributes or
+    //   NexusAloCancelledEventAttributes because that is inside completion.
+    NexusCancelRequestedEventAttributes nexus_cancel_requested_event_attributes = 55;
+  }
+}
