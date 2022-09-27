@@ -5,7 +5,6 @@ package nexus.backend.v1;
 import "nexus/backend/v1/model.proto";
 
 import "google/api/annotations.proto";
-import "google/protobuf/any.proto";
 
 // This service is implemented by Nexus backends to support service registration
 // and task handling.
@@ -153,6 +152,11 @@ message CallRequest {
   //
   // NOTES:
   // * For HTTP this is part of the URL most likely.
+  // * For Temporal workflow commands/events this is just a simple name, but for
+  //   direct calling clients this is much more than just a name, it is an
+  //   endpoint and may need to carry auth in the future. Should we break this
+  //   out into a type? Should we stop reusing this CallRequest on the Temporal
+  //   side?
   string service = 2;
 
   // Metadata for the operation.
@@ -175,7 +179,7 @@ message CallRequest {
   // * For HTTP this is part of the URL most likely.
   // * Yes, "<alo-operation>" means that any call _could_ be an ALO, but maybe
   //   not. This poses many challenges on the user. Are we ok with this?
-  string operation = 3;
+  string operation = 4;
 
   // Input for the operation.
   //
@@ -183,7 +187,7 @@ message CallRequest {
   // * For HTTP, this is the body.
   // * We are not handling large, streaming inputs at this time (e.g. streaming
   //   a file upload).
-  bytes input = 4;
+  bytes input = 5;
 
   // NOTES:
   // * How do we represent a way to push response back? We only need this for
@@ -224,7 +228,7 @@ message CallResponse {
   //   (e.g. streaming a file upload).
   bytes output = 4;
 
-  message ResponseType {
+  enum ResponseType {
     RESPONSE_TYPE_UNSPECIFIED = 0;
     ALO_INFO = 1;
   }
