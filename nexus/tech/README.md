@@ -28,7 +28,7 @@ In addition to normal documentation, some files have areas with `NOTES` for some
 
 How it works in detail:
 
-**From Alice's POV**
+#### From Alice's POV
 
 1. Alice, inside her workflow calls `ExecuteNexus` which is meant to _start_ a Nexus call and return a future.
 1. Alice's Temporal server receives this schedule Nexus command and:
@@ -67,36 +67,39 @@ func AliceWorkflow(ctx workflow.Context) error {
 }
 ```
 
-**From Bob's POV**
+#### From Bob's POV
 
 Note, this is for Temporal+Nexus Workflow-as-ALO. Generic Nexus handlers may do something different.
 
-1. Bob is running a Temporal+Nexus server and a Temporal+Nexus worker that:
-   1. Has a Nexus handler registered to handle Nexus calls. Technically underneath, it's a low-level Nexus handler that
-      just starts the workflow defined in the next point for each request, but to Bob it was just a simple one-liner or
-      config or something else really high level.
-   1. Has an implicit Temporal workflow registered to handle Nexus requests. This is a generic workflow that accepts an
-      activity to invoke on Nexus request and handles the callback URL sending.
-   1. Has a high-level Nexus handler that, via helpers, knows to just map the ALO Alice will call 1:1 with a Temporal
-      workflow. This is basically the activity the generic workflow invokes. To Bob, this is a very simple one-liner or
-      config or whatever.
-1. Upon receipt of Alice's Nexus call request in Bob's Nexus server, the request is sent to a polling Nexus worker.
-1. Upon receive of Alice's Nexus call request in Bob's Nexus worker/handler, the high-level handler is looked up based
-   on the request and the low-level handler starts the generic workflow which starts the activity to invoke the
-   high-level handler.
-1. Bob's high-level Nexus handler (which was just configured, no code):
-   1. Uses a Temporal client to get-or-start the workflow Bob wants to run for this Nexus call. Note, this is a
-      get-or-start for idempotency.
-   1. Sends a signal to the calling internal-request-handler workflow that the ALO was started.
-   1. Waits for the Temporal workflow to complete, heartbeating all the while
-   1. Returns from the handler (and in turn from the activity) with the completion
-1. Bob's low-level request workflow that is running the activity that is running the Nexus handler:
-   1. Upon first receipt of a "ALO started" signal, the Nexus request is marked completed with the ALO info.
-      1. TBD on how a workflow relays this to the underlying Nexus handler waiting for start. This is the problem sync
-         updates will solve, but in the meantime use one of the hacks.
-   1. Wait for the activity to complete.
-   1. Upon activity completion of the ALO response (or error), invoke Alice's callback as an activity from inside this
-      workflow before completing the workflow.
+Nexus worker-side definitions for the purposes of this flow (not their actual names because they are confusing):
+
+* Nexus Request Handler - implicit, low-level handler that accepts a Nexus request and starts the Nexus Handler Workflow
+  and waits until it has said "started" or "completed".
+* Nexus Handler Workflow - implicit workflow wrapping all Nexus calls (invokes Nexus Handler Activity and invokes
+  callback upon ALO completion)
+* Nexus Handler Activity - implicit activity that just invokes the actual Nexus Handler
+* Nexus Handler - code Bob could write, but we have defaults for 1:1 starting workflows
+
+Flow:
+
+1. Upon receipt of Alice's Nexus request in Bob's Nexus server, the request is sent to a polling Nexus worker.
+1. Upon receipt of Alice's Nexus request in Bob's Nexus Request Handler, a lookup is done to see which Nexus Handler
+   this corresponds to, and then a Nexus Handler Workflow is started to handle that request.
+1. Upon receipt of Alice's Nexus request in Bob's Nexus Handler Workflow, an activity is started to handle that request.
+1. Upon receipt of Alice's Nexus request in Bob's Nexus Handler Activity, Bob's Nexus handler is invoked to run the
+   request.
+1. Bob's Nexus Handler (usually not hand-coded, but could be) uses a Temporal client to get-or-start whatever Temporal
+   workflow corresponds to the request. Once started, the parent workflow is signalled with this "ALO info".
+   1. To be idempotent, it's a get-or-start and the parent workflow is smart enough to discard duplicate signals
+1. Bob's Nexus Handler Workflow receives this signal and notifies Bob's Nexus Request Handler that the ALO has started
+   1. This is a use case for sync update, but for now can use one of the hacky req/resp approaches to signal out from
+      workflow.
+1. Bob's Nexus Request Handler completes to Alice with the started ALO info.
+1. Bob's Nexus Handler is waiting on Temporal workflow completion via the client, heartbeating all the while.
+1. Bob's Nexus Handler gets Temporal workflow completion and completes itself which completes Bob's Nexus Handler
+   Activity.
+1. Bob's Nexus Workflow gets the activity completion and invokes Alice's ALO completion callback via another activity
+   and then completes itself.
 
 While this may seem convoluted, it's important for flexibility. But it's simplified for the common 1:1 Temporal workflow
 use case. For example, Bob's code might look something like:
@@ -104,7 +107,8 @@ use case. For example, Bob's code might look something like:
 ```go
 func StartWorker(ctx context.Context, client client.Client) error {
   worker := temporalnexus.NewWorker(client, temporalnexus.WorkerOptions{})
-  // Of course "Name" could be implied
+  // This is sugar over registering an ALO handler that starts a workflow. Of
+  // course "Name" could be implied.
   worker.RegisterALOWorkflow(BobWorkflow, worker.ALOWorkflowOptions{Name: "bob-alo-call"})
   return worker.Start()
 }
@@ -113,3 +117,14 @@ func BobWorkflow(ctx workflow.Context, someParam string) (string, error) {
   return strings.ToUpper(someParam), nil
 }
 ```
+
+With this flexibility the following can be customized:
+
+* Instead of just calling `RegisterALOWorkflow` which is just a helper for a workflow-starting handler, Bob could
+  `RegisterALOHandler` which gives him a Temporal client he can do whatever he wants with and wait as long as he wants.
+  (heartbeating is done in background and a friendly call is exposed for telling Alice that the ALO has "started").
+* Instead of registering an ALO handler, Bob could just `RegisterNexusHandler` directly. Maybe Bob doesn't want to start
+  anything from Temporal at all? Or maybe Bob wants to expose a query to that workflow.
+
+We can also make it easy to expose queries, signals, etc as Nexus calls. We make it easy to expose workflows as ALOs,
+have custom ALOs, or just have custom Nexus calls. It's all sugar/helpers all the way down to the Nexus handler.
