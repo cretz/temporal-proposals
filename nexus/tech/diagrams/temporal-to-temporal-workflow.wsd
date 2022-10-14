@@ -28,7 +28,8 @@ end
 
 group Service
 else Temporal Workflow Service
-  "Bob's\nWorkflow Worker" -> "Bob's\nNexus Worker" : Complete workflow command
+  "Bob's\nWorkflow Worker" -> "Bob's\nTemporal/Nexus" : Complete workflow
+  "Bob's\nTemporal/Nexus" -> "Bob's\nNexus Worker" : Workflow completed
 else Nexus Backend Service
   "Bob's\nNexus Worker" -> "Alice's\nTemporal" : ALO complete callback
 else Temporal Workflow Service
