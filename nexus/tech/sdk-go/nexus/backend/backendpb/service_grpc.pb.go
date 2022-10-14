@@ -27,18 +27,27 @@ type BackendServiceClient interface {
 	//
 	// NOTES:
 	// * User would be a Nexus admin, often via CLI or UI.
+	// * This is not to be confused with the mapping for the caller backend of
+	//   endpoint names to actual endpoints. Rather this is the receiving backend
+	//   service. A service must be created before a Nexus call can be made on it.
 	UpdateServices(ctx context.Context, in *UpdateServicesRequest, opts ...grpc.CallOption) (*UpdateServicesResponse, error)
 	// Get all registered services on this backend.
 	//
 	// NOTES:
-	// * User would be any Nexus caller to this backend.
+	// * User would be any Nexus caller to this backend. This is basically a
+	//   discovery endpoint and in the future may have a more proper spec defining
+	//   what operations are available.
 	// * There are currently no use cases that justify any kind of filtering here.
-	// * Future
 	GetServices(ctx context.Context, in *GetServicesRequest, opts ...grpc.CallOption) (*GetServicesResponse, error)
 	// Make a Nexus call to this backend.
 	//
 	// NOTES:
 	// * User would be any Nexus caller to this backend.
+	// * In the from-Temporal-workflow-to-Temporal use case, this would be invoked
+	//   by the caller's Temporal server and received/hosted by the callee
+	//   Temporal server.
+	// * Due to the fact that long-polling for ALO response is supported, this
+	//   call does not necessarily have to be short lived (but it should be).
 	Call(ctx context.Context, in *CallRequest, opts ...grpc.CallOption) (*CallResponse, error)
 	// Ask for the next Nexus request to process by a worker. This is a long-poll
 	// that may be terminated by the backend after a period of time with no
@@ -125,18 +134,27 @@ type BackendServiceServer interface {
 	//
 	// NOTES:
 	// * User would be a Nexus admin, often via CLI or UI.
+	// * This is not to be confused with the mapping for the caller backend of
+	//   endpoint names to actual endpoints. Rather this is the receiving backend
+	//   service. A service must be created before a Nexus call can be made on it.
 	UpdateServices(context.Context, *UpdateServicesRequest) (*UpdateServicesResponse, error)
 	// Get all registered services on this backend.
 	//
 	// NOTES:
-	// * User would be any Nexus caller to this backend.
+	// * User would be any Nexus caller to this backend. This is basically a
+	//   discovery endpoint and in the future may have a more proper spec defining
+	//   what operations are available.
 	// * There are currently no use cases that justify any kind of filtering here.
-	// * Future
 	GetServices(context.Context, *GetServicesRequest) (*GetServicesResponse, error)
 	// Make a Nexus call to this backend.
 	//
 	// NOTES:
 	// * User would be any Nexus caller to this backend.
+	// * In the from-Temporal-workflow-to-Temporal use case, this would be invoked
+	//   by the caller's Temporal server and received/hosted by the callee
+	//   Temporal server.
+	// * Due to the fact that long-polling for ALO response is supported, this
+	//   call does not necessarily have to be short lived (but it should be).
 	Call(context.Context, *CallRequest) (*CallResponse, error)
 	// Ask for the next Nexus request to process by a worker. This is a long-poll
 	// that may be terminated by the backend after a period of time with no

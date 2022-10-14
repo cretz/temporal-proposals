@@ -5,10 +5,10 @@
 actor "Alice's\nWorkflow Worker"
 group Service
 else Temporal Workflow Service
-  "Alice's\nWorkflow Worker" -> "Alice's\nTemporal/Nexus" : Schedule Nexus command
-  "Alice's\nTemporal/Nexus" -> "Alice's\nTemporal/Nexus" : Persist and lookup endpoint for endpoint name
+  "Alice's\nWorkflow Worker" -> "Alice's\nTemporal" : Schedule Nexus command
+  "Alice's\nTemporal" -> "Alice's\nTemporal" : Persist and lookup endpoint for endpoint name
 else Nexus Backend Service
-  "Alice's\nTemporal/Nexus" -> "Bob's\nTemporal/Nexus" : Make Nexus call
+  "Alice's\nTemporal" -> "Bob's\nTemporal/Nexus" : Make Nexus call
   actor "Bob's\nNexus Worker"
   "Bob's\nTemporal/Nexus" -> "Bob's\nNexus Worker" : Handle Nexus request
 else Temporal Workflow Service
@@ -18,22 +18,22 @@ else Temporal Workflow Service
   "Bob's\nTemporal/Nexus" -> "Bob's\nNexus Worker" : Started Temporal workflow
 else Nexus Backend Service
   "Bob's\nNexus Worker" -> "Bob's\nTemporal/Nexus" : Complete Nexus request with ALO info
-  "Bob's\nTemporal/Nexus" -> "Alice's\nTemporal/Nexus" : Complete Nexus request with ALO info
+  "Bob's\nTemporal/Nexus" -> "Alice's\nTemporal" : Complete Nexus request with ALO info
 else Temporal Workflow Service
-  "Alice's\nTemporal/Nexus" -> "Alice's\nTemporal/Nexus" : Persist
-  "Alice's\nTemporal/Nexus" -> "Alice's\nWorkflow Worker" : Nexus started event
+  "Alice's\nTemporal" -> "Alice's\nTemporal" : Persist
+  "Alice's\nTemporal" -> "Alice's\nWorkflow Worker" : Nexus started event
 end
 
 == Complete Workflow-based ALO ==
 
 group Service
 else Temporal Workflow Service
-  "Bob's\nWorkflow Worker" -> "Bob's\nTemporal/Nexus" : Complete workflow command
+  "Bob's\nWorkflow Worker" -> "Bob's\nNexus Worker" : Complete workflow command
 else Nexus Backend Service
-  "Bob's\nTemporal/Nexus" -> "Alice's\nTemporal/Nexus" : ALO complete callback
+  "Bob's\nNexus Worker" -> "Alice's\nTemporal" : ALO complete callback
 else Temporal Workflow Service
-  "Alice's\nTemporal/Nexus" -> "Alice's\nTemporal/Nexus" : Persist
-  "Alice's\nTemporal/Nexus" -> "Alice's\nWorkflow Worker" : Nexus ALO completed event
+  "Alice's\nTemporal" -> "Alice's\nTemporal" : Persist
+  "Alice's\nTemporal" -> "Alice's\nWorkflow Worker" : Nexus ALO completed event
 end
 
 @enduml

@@ -4,12 +4,14 @@ package temporal.api.history.v1;
 
 import "nexus/backend/v1/service.proto";
 
+import "google/protobuf/duration.proto";
+
 message NexusCallScheduledEventAttributes {
   // Nexus request.
   nexus.backend.v1.CallRequest request = 1;
 
-  // NOTES:
-  // * Add timeouts/retry if we choose to include them in the command.
+  // Original timeout of the command.
+  google.protobuf.Duration timeout = 2;
 }
 
 message NexusCallCompletedEventAttributes {
@@ -22,7 +24,9 @@ message NexusCallCompletedEventAttributes {
     // NOTES:
     // * This can be a completed non-ALO or a started ALO. We prefer to have the
     //   call response model this and if it's not clear how to extract one from
-    //   another we can clarify on that message or make helpers available.
+    //   another we can clarify on that message or make helpers available. SDK
+    //   is expected to make it easy to differentiate "started" promise from
+    //   "completed" (which are the same for non-ALO).
     nexus.backend.v1.CallResponse response = 2;
 
     // Nexus call could not be invoked. This is not the same as a Nexus call
@@ -33,9 +37,6 @@ message NexusCallCompletedEventAttributes {
     //   the same event. Can change to separate if wanted.
     temporal.api.failure.v1.Failure failure = 3;
   }
-
-  // NOTES:
-  // * Add retry/last_failure/etc if we choose to do retries.
 }
 
 message NexusAloCompletedEventAttributes {
@@ -47,10 +48,6 @@ message NexusAloCompletedEventAttributes {
 
   // Completed ALO response.
   nexus.backend.v1.CallResponse response = 3;
-
-  // NOTES:
-  // * Add retry/last_failure/etc if we choose to do retries.
-  // * Add failure if we support caller timeouts.
 }
 
 message NexusCancelRequestedEventAttributes {
@@ -67,7 +64,7 @@ message HistoryEvent {
     // Event for the scheduling of the Nexus call.
     //
     // NOTES:
-    // * If we don't allow retries and we expect Nexus calls to be handled
+    // * Since we don't allow retries and we expect Nexus calls to be handled
     //   immediately or failed, we technically could get rid of this, but we
     //   probably shouldn't.
     NexusCallScheduledEventAttributes nexus_call_scheduled_event_attributes = 52;

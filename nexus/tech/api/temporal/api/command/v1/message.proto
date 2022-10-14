@@ -4,23 +4,29 @@ package temporal.api.command.v1;
 
 import "nexus/backend/v1/service.proto";
 
+import "google/protobuf/duration.proto";
+
 message ScheduleNexusCallCommandAttributes {
   // Nexus request to make.
   // 
   // NOTES:
   // * "service" in the request is actually a simple string endpoint that is
   //   server-side mapped to the actual third-party Nexus endpoint.
+  // * While identifiers are required in this value, the SDK does not require
+  //   them from the caller. The SDK will default to a unique value.
   nexus.backend.v1.CallRequest request = 1;
 
+  // Single timeout for the entire Nexus operation. If the Nexus operation is an
+  // ALO, this represents the completion timeout.
+  // 
   // NOTES:
-  // * Is there value in a retry policy at this level? Or should a Nexus call
-  //   always have a single attempt and retries are either built in to the
-  //   handler or not performed? How are details like error types represented?
-  //   (see outstanding notes on error representation).
-  // * If there is no retry, is there value in a schedule to start timeout? Is
-  //   there a concept of the server continually trying the third-party Nexus
-  //   invocation if it's down? Or are we guaranteeing that the next task
-  // * Is there value in a start/schedule to close timeout? I would think so.
+  // * There is no retry policy by intention. Users can retry as needed inside
+  //   the workflow.
+  // * There is no separation of schedule vs start to close. Everything is
+  //   schedule to close because the server doesn't know what "schedule" vs
+  //   "start" means on the third party. Technically ALO "start" and ALO "run"
+  //   are separate concepts, but this Nexus call is for ALO _and_ non-ALO.
+  google.protobuf.Duration timeout = 2;
 }
 
 message RequestCancelNexusCommandAttributes {

@@ -12,7 +12,7 @@ import "google/api/annotations.proto";
 // NOTES:
 // * This service is all that a Nexus server has to implement to support
 //   non-Temporal-specific Nexus SDK code.
-// * Technically each of the ~4 things this service does are for a different
+// * Technically each of the ~3 things this service does are for a different
 //   audience that will be detailed in the NOTES of each. This can be broken up
 //   if it'd make sense for a Nexus backend to, say, only support
 //   "GetServices" + "Call".
@@ -24,6 +24,9 @@ service BackendService {
   //
   // NOTES:
   // * User would be a Nexus admin, often via CLI or UI.
+  // * This is not to be confused with the mapping for the caller backend of
+  //   endpoint names to actual endpoints. Rather this is the receiving backend
+  //   service. A service must be created before a Nexus call can be made on it.
   rpc UpdateServices (UpdateServicesRequest) returns (UpdateServicesResponse) {
     option (google.api.http) = {
       post: "/v1/backend/services"
@@ -34,9 +37,10 @@ service BackendService {
   // Get all registered services on this backend.
   //
   // NOTES:
-  // * User would be any Nexus caller to this backend.
+  // * User would be any Nexus caller to this backend. This is basically a
+  //   discovery endpoint and in the future may have a more proper spec defining
+  //   what operations are available.
   // * There are currently no use cases that justify any kind of filtering here.
-  // * Future 
   rpc GetServices (GetServicesRequest) returns (GetServicesResponse) {
     option (google.api.http) = {
       get: "/v1/backend/services"
@@ -47,6 +51,11 @@ service BackendService {
   //
   // NOTES:
   // * User would be any Nexus caller to this backend.
+  // * In the from-Temporal-workflow-to-Temporal use case, this would be invoked
+  //   by the caller's Temporal server and received/hosted by the callee
+  //   Temporal server.
+  // * Due to the fact that long-polling for ALO response is supported, this
+  //   call does not necessarily have to be short lived (but it should be).
   rpc Call (CallRequest) returns (CallResponse) {
     option (google.api.http) = {
       post: "/v1/backend/call"
@@ -110,7 +119,7 @@ message UpdateServicesRequest {
 }
 
 message UpdateServicesResponse {
-  // Set of created/updated services. Does not include deletes ones.
+  // Set of created/updated services. Does not include deleted ones.
   repeated Service services = 1;
 }
 
@@ -143,7 +152,7 @@ message CallRequest {
   // NOTES:
   // * So, say in a scenario where a user isn't using some good global
   //   uniqueness. Can a completely separate caller use the same request
-  //   identifier to cause clash. Ideally, for security purposes each
+  //   identifier to cause clash? Ideally, for security purposes each
   //   authenticated caller org is isolated from the other, so the onus is on
   //   the server to qualify this.
   string request_id = 1;
@@ -156,7 +165,7 @@ message CallRequest {
   //   direct calling clients this is much more than just a name, it is an
   //   endpoint and may need to carry auth in the future. Should we break this
   //   out into a type? Should we stop reusing this CallRequest on the Temporal
-  //   side?
+  //   side which only needs a simple string?
   string service = 2;
 
   // Metadata for the operation.
@@ -166,7 +175,8 @@ message CallRequest {
   //   :scheme, :authority, and :path for all HTTP calls.
   map<string, MetadataValues> metadata = 3;
 
-  // Operation for this call. Some operations are special:
+  // Operation for this call. By convention these are slash-delimited to
+  // represent any kind of hierarchy. Some operations are special:
   // 
   // * <alo-operation> - Start ALO, input can be anything, response is always
   //   AloInfo.
@@ -174,11 +184,16 @@ message CallRequest {
   //   no output.
   // * <alo-operation>/get - Get ALO, input must be AloRef, response is always
   //   AloInfo.
+  // * <alo-operation>/wait - Wait for ALO completion, input must be AloRef,
+  //   successful response is CallResponse. This can be a long-poll operation
+  //   and callers are expected to re-wait if the connection is severed.
   //
   // NOTES:
   // * For HTTP this is part of the URL most likely.
   // * Yes, "<alo-operation>" means that any call _could_ be an ALO, but maybe
   //   not. This poses many challenges on the user. Are we ok with this?
+  // * <alo-operation>/wait is the only reason to support long-polling in all of
+  //   Nexus. Do we want to make that (or ALO calls in general) more explicit?
   string operation = 4;
 
   // Input for the operation.
@@ -189,12 +204,43 @@ message CallRequest {
   //   a file upload).
   bytes input = 5;
 
+  // If set and the operation is an ALO (i.e. the response type is ALO_INFO),
+  // this is the callback invoked upon completion. If the operation is not an
+  // ALO this value is ignored.
+  CompletionCallback alo_completion_callback = 6;
+
+  message CompletionCallback {
+
+    // Callback to invoke on ALO completion.
+    //
+    // NOTES:
+    // * Don't need this oneof now (moving top-level into oneof is a backwards
+    //   compatible operation), it's just to show we can have other callback
+    //   approaches.
+    oneof callback {
+      Http http = 1;
+    }
+
+    // HTTP details for the callback.
+    //
+    // NOTES:
+    // * This obviously lacks any kind of auth details at the moment. Having
+    //   said that, users are strongly encouraged to embed one-time-use tokens
+    //   into the URL that are authed when received. This allows URLs to survive
+    //   authentication rollover.
+    // * It is particularly notable that this, in itself, could be a Nexus
+    //   endpoint. That may be one (ugly) way to intercept/alter responses.
+    message Http {
+      // URL to POST the JSON CallResponse POSTed to it.
+      string url = 1;
+    }
+  }
+
   // NOTES:
-  // * How do we represent a way to push response back? We only need this for
-  //   ALOs but one of our goals was to not have the caller care whether it was
-  //   an ALO. We could give callback URL/gRPC. Many ideas, but afraid to put
-  //   one in writing right now. Are we sure the caller doesn't need to know
-  //   they are invoking an ALO at call time?
+  // * We intentionally don't add a timeout on this request for either the
+  //   request itself or the full ALO time. Callers are expected to timeout
+  //   themselves for the request itself. Callers are expected to cancel an ALO
+  //   after their preferred ALO timeout.
   // * In the future we can provide more caller information (addr, TLS, etc).
   // * In the future we can include the protocol the caller is using.
 }
@@ -208,36 +254,68 @@ message CallResponse {
   // NOTES:
   // * For HTTP these are headers. This will include the HTTP2 header :status
   //   for all HTTP calls.
+  // * Is there somewhere we want to define an "encoding" for success/failure
+  //   output types?
   map<string, MetadataValues> metadata = 2;
 
-  // Type of operation. If this is ALO_INFO, then the output is an AloInfo
-  // proto. This can come from starting an ALO or getting an ALO.
-  // 
-  // NOTES:
-  // * Open to clearer ways to represent that the result of an operation is a
-  //   start ALO and not just a regular response.
-  // * For HTTP, if ALO_INFO, this would also be in a header. Maybe this should
-  //   be in metadata anyways?
-  ResponseType response_type = 3;
+  oneof response {
+    Success success = 3;
 
-  // Output for the operation.
-  //
-  // NOTES:
-  // * For HTTP, this is the body.
-  // * We are not handling large, streaming inputs at this time
-  //   (e.g. streaming a file upload).
-  bytes output = 4;
-
-  enum ResponseType {
-    RESPONSE_TYPE_UNSPECIFIED = 0;
-    ALO_INFO = 1;
+    // Failure of a call. This is NOT validation or eager failure, but rather
+    // failure of the underlying implementation.
+    //
+    // For non-ALO calls and ALO starts, this should probably never be used but
+    // instead a gRPC failure should be returned (but clients must be prepared
+    // to handle this like a gRPC failure if present).
+    //
+    // For ALO call completions, this failure is returned from a long-poll wait
+    // or sent via callback.
+    Failure failure = 4;
   }
 
-  // NOTES:
-  // * How do we want to represent an error? Clearly we don't want to use gRPC
-  //   errors to represent Nexus request errors. But we don't want to marry
-  //   ourselves too close to HTTP. But we also don't want them to have to parse
-  //   custom output to even know it's an error or what general error it is.
+  message Success {
+    // Type of operation. If this is ALO_INFO, then the output is an AloInfo
+    // proto. This can come from starting an ALO or getting an ALO.
+    // 
+    // NOTES:
+    // * Open to clearer ways to represent that the result of an operation is a
+    //   start ALO and not just a regular response.
+    // * For HTTP, if ALO_INFO, this would also be in a header. Maybe this
+    //   should be in metadata anyways?
+    ResponseType response_type = 1;
+  
+    // Output for the operation.
+    //
+    // NOTES:
+    // * For HTTP, this is the body.
+    // * We are not handling large, streaming inputs at this time
+    //   (e.g. streaming a file upload).
+    bytes output = 2;
+  
+    enum ResponseType {
+      RESPONSE_TYPE_UNSPECIFIED = 0;
+      ALO_INFO = 1;
+    }
+  }
+
+  message Failure {
+    // Arbitrary user-defined code for failure.
+    // 
+    // NOTES:
+    // * It seems unreasonable to pre-define a set of codes (HTTP status code?
+    //   gRPC status code?). But is there value in a generic representation of
+    //   certain types of errors? Should we even have this field?
+    uint32 code = 1;
+
+    // Error details for the operation.
+    //
+    // NOTES:
+    // * It is understood that opaque error blobs are hard to reason about
+    //   generically, but it is important for flexibility. Do we want to be more
+    //   strict about error formats? For now, clients must be written to accept
+    //   arbitrary types as error output just as they do for success output.
+    bytes output = 2;
+  }
 }
 
 message PollNexusRequestQueueRequest {
