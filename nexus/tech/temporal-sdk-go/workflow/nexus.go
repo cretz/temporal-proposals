@@ -1,3 +1,5 @@
+// Package workflow would technically be embedded into Temporal's SDK in the
+// workflow package.
 package workflow
 
 import "go.temporal.io/sdk/workflow"
